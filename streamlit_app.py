@@ -14,6 +14,10 @@ rekognition_client = boto3.client(
 
 def analyze_image_with_rekognition(image):
     """Uses Amazon Rekognition to analyze an image and generate alt text."""
+    # Convert image to RGB if it has an alpha channel
+    if image.mode == 'RGBA':
+        image = image.convert('RGB')
+    
     buffered = BytesIO()
     image.save(buffered, format="JPEG")
     image_bytes = buffered.getvalue()
@@ -55,7 +59,7 @@ def generate_descriptive_text(labels, openai_api_key):
 st.title("Enhanced Alt Text Generator with NLP")
 
 # Check if OpenAI API key is available in secrets
-default_api_key = st.secrets.get("OPENAI_API_KEY2", "")
+default_api_key = st.secrets.get("OPENAI_API_KEY", "")
 
 # Input for OpenAI API key if not provided in secrets
 if not default_api_key:
@@ -63,7 +67,7 @@ if not default_api_key:
 else:
     openai_api_key = default_api_key
 
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png", "webp"])
 
 if uploaded_file is not None and openai_api_key:
     image = Image.open(uploaded_file)
