@@ -1,66 +1,84 @@
-import altair as alt
-import pandas as pd
 import streamlit as st
+from PIL import Image
+import boto3
+from io import BytesIO
+from openai import OpenAI
 
-# Show the page title and description.
-st.set_page_config(page_title="Movies dataset", page_icon="🎬")
-st.title("🎬 Movies dataset")
-st.write(
-    """
-    This app visualizes data from [The Movie Database (TMDB)](https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata).
-    It shows which movie genre performed best at the box office over the years. Just 
-    click on the widgets below to explore!
-    """
+# Initialize Boto3 client for Amazon Rekognition
+rekognition_client = boto3.client(
+    'rekognition',
+    aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"],
+    region_name=st.secrets["AWS_DEFAULT_REGION"]
 )
 
-
-# Load the data from a CSV. We're caching this so it doesn't reload every time the app
-# reruns (e.g. if the user interacts with the widgets).
-@st.cache_data
-def load_data():
-    df = pd.read_csv("data/movies_genres_summary.csv")
-    return df
-
-
-df = load_data()
-
-# Show a multiselect widget with the genres using `st.multiselect`.
-genres = st.multiselect(
-    "Genres",
-    df.genre.unique(),
-    ["Action", "Adventure", "Biography", "Comedy", "Drama", "Horror"],
-)
-
-# Show a slider widget with the years using `st.slider`.
-years = st.slider("Years", 1986, 2006, (2000, 2016))
-
-# Filter the dataframe based on the widget input and reshape it.
-df_filtered = df[(df["genre"].isin(genres)) & (df["year"].between(years[0], years[1]))]
-df_reshaped = df_filtered.pivot_table(
-    index="year", columns="genre", values="gross", aggfunc="sum", fill_value=0
-)
-df_reshaped = df_reshaped.sort_values(by="year", ascending=False)
-
-
-# Display the data as a table using `st.dataframe`.
-st.dataframe(
-    df_reshaped,
-    use_container_width=True,
-    column_config={"year": st.column_config.TextColumn("Year")},
-)
-
-# Display the data as an Altair chart using `st.altair_chart`.
-df_chart = pd.melt(
-    df_reshaped.reset_index(), id_vars="year", var_name="genre", value_name="gross"
-)
-chart = (
-    alt.Chart(df_chart)
-    .mark_line()
-    .encode(
-        x=alt.X("year:N", title="Year"),
-        y=alt.Y("gross:Q", title="Gross earnings ($)"),
-        color="genre:N",
+def analyze_image_with_rekognition(image):
+    """Uses Amazon Rekognition to analyze an image and generate alt text."""
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    image_bytes = buffered.getvalue()
+    
+    # Detect labels with Amazon Rekognition
+    response = rekognition_client.detect_labels(
+        Image={'Bytes': image_bytes},
+        MaxLabels=10,
+        MinConfidence=75
     )
-    .properties(height=320)
-)
-st.altair_chart(chart, use_container_width=True)
+    
+    # Extract labels
+    labels = [label['Name'] for label in response['Labels']]
+    return labels
+
+def generate_descriptive_text(labels, openai_api_key):
+    """Generates descriptive text using OpenAI's GPT model."""
+    if not labels:
+        return "No descriptive labels found."
+    
+    # Initialize OpenAI client with the API key
+    client = OpenAI(api_key=openai_api_key)
+    
+    # Construct a prompt for the GPT model
+    prompt = f"Create a descriptive sentence for an image containing the following elements: {', '.join(labels)}."
+    
+    # Call OpenAI's API to generate text using the new client interface
+    response = client.chat.completions.create(
+        model="gpt-4o",  # Use a suitable model
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that generates descriptive text."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=60
+    )
+    
+    return response.choices[0].message.content.strip()
+
+st.title("Enhanced Alt Text Generator with NLP")
+
+# Check if OpenAI API key is available in secrets
+default_api_key = st.secrets.get("OPENAI_API_KEY2", "")
+
+# Input for OpenAI API key if not provided in secrets
+if not default_api_key:
+    openai_api_key = st.text_input("Enter your OpenAI API Key:", type="password")
+else:
+    openai_api_key = default_api_key
+
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None and openai_api_key:
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Uploaded Image', use_container_width=True)
+    
+    try:
+        # Get labels from Rekognition
+        labels = analyze_image_with_rekognition(image)
+        
+        # Generate descriptive text using NLP
+        alt_text = generate_descriptive_text(labels, openai_api_key)
+        
+        st.write("Generated Alt Text:")
+        st.write(alt_text)
+    except Exception as e:
+        st.error(f"Error generating alt text: {str(e)}")
+else:
+    st.warning("Please upload an image and ensure an OpenAI API key is provided.")
