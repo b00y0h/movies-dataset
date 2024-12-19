@@ -46,7 +46,7 @@ def generate_descriptive_text(labels, openai_api_key):
     
     # Call OpenAI's API to generate text using the new client interface
     response = client.chat.completions.create(
-        model="gpt-4o",  # Use a suitable model
+        model="gpt-3.5-turbo",  # Use a suitable model you have access to
         messages=[
             {"role": "system", "content": "You are a helpful assistant that generates descriptive text."},
             {"role": "user", "content": prompt}
